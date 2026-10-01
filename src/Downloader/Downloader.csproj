@@ -4,7 +4,7 @@
              targets stay untouched. Language features (records, init, primary ctors, extension
              members, `field` keyword) all compile for net462 with LangVersion=latestMajor; the
              runtime gaps are bridged by the conditional BCL packages below plus #if blocks. -->
-        <TargetFrameworks>net462;netstandard2.0;net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
+        <TargetFrameworks>net462;netstandard2.0;net8.0;net9.0;net10.0$(Net11Suffix)</TargetFrameworks>
         <LangVersion>latestMajor</LangVersion>
         <Version>5.9.8</Version>
         <Title>Downloader</Title>

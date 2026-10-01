@@ -1,0 +1,15 @@
+<Project>
+    <PropertyGroup>
+        <!-- Keep net11.0 in the multi-targeting lists only when the SDK performing the
+             build can actually target .NET 11. CI installs the 11.0 preview SDK (workflows
+             run setup-dotnet for both 10.0.x and 11.0.x), so release packaging and CI lose
+             nothing; a local machine with only the .NET 10 SDK simply skips that TFM
+             instead of failing every restore/build with NETSDK1045 ("current .NET SDK does
+             not support targeting .NET 11.0").
+             NETCoreSdkMaximumTargetFrameworkVersion comes from the installed SDK itself
+             ("10.0" on a .NET 10 SDK). Force the behavior explicitly when needed:
+                 dotnet build -p:Net11Suffix=";net11.0"   (always include)
+                 dotnet build -p:Net11Suffix=""           (always skip) -->
+        <Net11Suffix Condition="'$(NETCoreSdkMaximumTargetFrameworkVersion)' != '' and $([MSBuild]::VersionGreaterThanOrEquals('$(NETCoreSdkMaximumTargetFrameworkVersion)', '11.0'))">;net11.0</Net11Suffix>
+    </PropertyGroup>
+</Project>
