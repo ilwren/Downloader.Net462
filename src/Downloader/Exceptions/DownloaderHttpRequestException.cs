@@ -16,7 +16,10 @@ namespace Downloader.Exceptions;
 /// <c>EnsureSuccessStatusCode()</c>, so both code paths surface the same information to
 /// <c>ExceptionHelper</c> — and to consumers, since this still is-a
 /// <see cref="HttpRequestException"/>.
+/// Compiled out on the modern targets: it would only shadow the framework's
+/// <c>HttpRequestException.StatusCode</c> there (CS0108).
 /// </remarks>
+#if NETFRAMEWORK || NETSTANDARD2_0
 internal class DownloaderHttpRequestException : HttpRequestException
 {
     /// <summary>The HTTP status code the server responded with.</summary>
@@ -28,3 +31,4 @@ internal class DownloaderHttpRequestException : HttpRequestException
         StatusCode = statusCode;
     }
 }
+#endif

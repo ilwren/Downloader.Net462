@@ -95,11 +95,11 @@ public class RequestConfiguration
         string candidate = versionText.Trim();
         int metadataSeparatorIndex = candidate.IndexOf('+');
         if (metadataSeparatorIndex >= 0)
-            candidate = candidate[..metadataSeparatorIndex];
+            candidate = candidate.Substring(0, metadataSeparatorIndex);
 
         int preReleaseSeparatorIndex = candidate.IndexOf('-');
         if (preReleaseSeparatorIndex >= 0)
-            candidate = candidate[..preReleaseSeparatorIndex];
+            candidate = candidate.Substring(0, preReleaseSeparatorIndex);
 
         if (!Version.TryParse(candidate, out Version parsed) || parsed == ZeroVersion)
             return null;

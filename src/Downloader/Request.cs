@@ -114,10 +114,12 @@ public class Request
     public string GetFileNameFromUrl()
     {
         string filename = Path.GetFileName(Address.LocalPath);
-        int queryIndex = filename.IndexOf('?', StringComparison.Ordinal);
+        // Plain IndexOf('?')/Substring: char IndexOf is already ordinal, and the range
+        // indexer would require System.Index/System.Range — absent on net462/netstandard2.0.
+        int queryIndex = filename.IndexOf('?');
         if (queryIndex >= 0)
         {
-            filename = filename[..queryIndex];
+            filename = filename.Substring(0, queryIndex);
         }
 
         return filename;

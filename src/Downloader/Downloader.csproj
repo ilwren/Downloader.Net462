@@ -115,6 +115,10 @@ Found from a download manager whose retried-after-stop row was shown as failed e
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
+        <!-- The SDK's implicit .NET Framework reference set (mscorlib, System, System.Core, ...)
+             does NOT include System.Net.Http; reference it explicitly so HttpClient et al.
+             resolve against the targeting pack above. netstandard2.0 gets it via NETStandard.Library. -->
+        <Reference Include="System.Net.Http" />
     </ItemGroup>
 
     <ItemGroup>

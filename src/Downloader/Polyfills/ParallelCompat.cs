@@ -57,7 +57,8 @@ internal static class ParallelCompat
             MaxDegreeOfParallelism = maxDegreeOfParallelism,
             CancellationToken = cancellationToken
         };
-        return Parallel.ForEachAsync(source, options, body);
+        // BCL overload expects a ValueTask-returning body; adapt the shared Task-based delegate.
+        return Parallel.ForEachAsync(source, options, (item, ct) => new ValueTask(body(item, ct)));
     }
 #endif
 }

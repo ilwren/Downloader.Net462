@@ -97,9 +97,13 @@ public partial class SocketClient : IDisposable
         };
 
         // Client certificates require opting out of the OS automatic selection first.
+        // (netstandard2.0's HttpClientHandler predates the ClientCertificateOptions property —
+        // a populated ClientCertificates collection already implies manual selection there.)
         if (config.ClientCertificates?.Count > 0)
         {
+#if !NETSTANDARD2_0
             handler.ClientCertificateOptions = ClientCertificateOptions.Manual;
+#endif
             handler.ClientCertificates.AddRange(config.ClientCertificates);
         }
 

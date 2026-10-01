@@ -8,6 +8,18 @@ namespace Downloader.Extensions;
 
 internal static class ExceptionHelper
 {
+#if NETSTANDARD2_0
+    // netstandard2.0's HttpStatusCode enum predates RFC 7538 (308) and RFC 6585 (428/429);
+    // compare against the numeric values instead (net462's enum does name them).
+    private const HttpStatusCode PermanentRedirectStatus = (HttpStatusCode)308;
+    private const HttpStatusCode PreconditionRequiredStatus = (HttpStatusCode)428;
+    private const HttpStatusCode TooManyRequestsStatus = (HttpStatusCode)429;
+#else
+    private const HttpStatusCode PermanentRedirectStatus = HttpStatusCode.PermanentRedirect;
+    private const HttpStatusCode PreconditionRequiredStatus = HttpStatusCode.PreconditionRequired;
+    private const HttpStatusCode TooManyRequestsStatus = HttpStatusCode.TooManyRequests;
+#endif
+
     private static bool IsRedirectStatus(this HttpStatusCode statusCode)
     {
         return statusCode is
@@ -15,7 +27,7 @@ internal static class ExceptionHelper
             HttpStatusCode.Redirect or
             HttpStatusCode.RedirectMethod or
             HttpStatusCode.TemporaryRedirect or
-            HttpStatusCode.PermanentRedirect;
+            PermanentRedirectStatus;
     }
 
     extension(Exception error)
@@ -118,8 +130,8 @@ internal static class ExceptionHelper
     {
         return status is null || // no response received → transport failure
                status is HttpStatusCode.RequestTimeout or       // 408
-                   HttpStatusCode.PreconditionRequired or       // 428 — some CDNs (e.g. BunnyCDN) use it as a concurrency throttle (#226)
-                   HttpStatusCode.TooManyRequests or            // 429
+                   PreconditionRequiredStatus or                // 428 — some CDNs (e.g. BunnyCDN) use it as a concurrency throttle (#226)
+                   TooManyRequestsStatus or                     // 429
                    HttpStatusCode.ServiceUnavailable or         // 503
                    HttpStatusCode.GatewayTimeout or             // 504
                    HttpStatusCode.Ambiguous or                  // 300
@@ -127,7 +139,7 @@ internal static class ExceptionHelper
                    HttpStatusCode.Redirect or                   // 302
                    HttpStatusCode.RedirectMethod or             // 303
                    HttpStatusCode.TemporaryRedirect or          // 307
-                   HttpStatusCode.PermanentRedirect;            // 308
+                   PermanentRedirectStatus;                     // 308
     }
 
     /// <summary>
