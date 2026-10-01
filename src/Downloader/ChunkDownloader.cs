@@ -4,6 +4,7 @@ using Downloader.Polyfills;
 using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.ComponentModel;
+using System.Net.Http;
 using System.Net.Http.Headers;
 
 namespace Downloader;

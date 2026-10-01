@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
@@ -8,9 +9,10 @@ namespace Downloader.Extensions;
 
 internal static class ExceptionHelper
 {
-#if NETSTANDARD2_0
-    // netstandard2.0's HttpStatusCode enum predates RFC 7538 (308) and RFC 6585 (428/429);
-    // compare against the numeric values instead (net462's enum does name them).
+#if NETFRAMEWORK || NETSTANDARD2_0
+    // .NET Framework's and netstandard2.0's HttpStatusCode enums both predate RFC 7538 (308)
+    // and RFC 6585 (428/429) — the named members only exist on .NET 5+;
+    // compare against the numeric values there.
     private const HttpStatusCode PermanentRedirectStatus = (HttpStatusCode)308;
     private const HttpStatusCode PreconditionRequiredStatus = (HttpStatusCode)428;
     private const HttpStatusCode TooManyRequestsStatus = (HttpStatusCode)429;
