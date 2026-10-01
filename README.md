@@ -46,6 +46,7 @@ Downloader works on Windows, Linux, and macOS.
 - [Key Features](#key-features)
 - [Installation via NuGet](#installation-via-nuget)
 - [Installation via the .NET CLI](#installation-via-the-net-cli)
+- [Supported platforms](#supported-platforms)
 - [Usage](#usage)
   - [How to get the file name and size without downloading](#how-to-get-the-file-name-and-size-without-downloading)
   - [How to pause and resume downloads quickly](#how-to-pause-and-resume-downloads-quickly)
@@ -123,6 +124,31 @@ PM> Install-Package Downloader
 ```bash
 dotnet add package Downloader
 ```
+
+## Supported platforms
+
+The package ships multiple target-framework builds from the same source:
+
+| Target | Runtime |
+| ------ | ------- |
+| `net462` | .NET Framework 4.6.2 and higher (legacy) |
+| `netstandard2.0` | .NET Framework 4.6.1+, .NET Core 2.x, Mono, Unity, UWP (legacy) |
+| `net8.0` … `net11.0` | modern .NET (full feature set) |
+
+Notes for the **legacy targets** (`net462` / `netstandard2.0`):
+
+- The HTTP client runs on the `HttpClientHandler` / `ServicePointManager` stack instead of
+  `SocketsHttpHandler`, so it has **no HTTP/2** (always HTTP/1.1) and **no TLS 1.3**. TLS 1.2 is
+  enabled process-wide on first use (equivalent to `ServicePointManager.SecurityProtocol |= Tls12`).
+- TLS versions, the self-signed certificate acceptance callback and the per-server connection
+  limit (1000) are configured **process-wide** (the `ServicePointManager` model), not per
+  `DownloadConfiguration` instance.
+- Assembly **binding redirects** are required in the consuming app for the transitive BCL
+  packages (`System.Memory`, `System.Threading.Tasks.Extensions`,
+  `Microsoft.Bcl.AsyncInterfaces`, `System.Text.Json`). SDK-style projects get them
+  automatically via `AutoGenerateBindingRedirects`.
+- The downloader's public API surface (events, `ValueTask`, `IAsyncDisposable`, `Memory<byte>`,
+  `DownloadConfiguration`, …) is identical across all targets.
 
 ---
 

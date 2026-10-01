@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -65,7 +65,11 @@ public class Request
     {
         HttpRequestMessage request = new(HttpMethod.Get, Address);
         request.Version = Configuration.ProtocolVersion;
+#if NET5_0_OR_GREATER
+        // HttpVersionPolicy has no netfx equivalent — the .NET Framework HttpClient stack only
+        // speaks HTTP/1.x, so requesting "or lower" is implicitly its whole behaviour there.
         request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+#endif
         request.Headers.IfModifiedSince = Configuration.IfModifiedSince;
 
         // Handle authentication

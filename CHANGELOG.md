@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### ✨ Added
+
+- **`.NET Framework 4.6.2` and `netstandard2.0` targets.** The library multi-targets
+  `net462;netstandard2.0;net8.0;net9.0;net10.0;net11.0` from the same source — the public API
+  (events, `ValueTask`, `IAsyncDisposable`, `Memory<byte>`) is identical on every TFM. The
+  modern code path is byte-for-byte unchanged; the legacy targets bridge the runtime gaps:
+  BCL polyfill packages (`System.Memory`, `System.Threading.Tasks.Extensions`,
+  `Microsoft.Bcl.AsyncInterfaces`, `System.Text.Json`), an `IsExternalInit` shim for
+  records/`init`, and `#if` fallbacks for the handful of APIs that predate .NET Core 2.1
+  (`SocketsHttpHandler` → `HttpClientHandler`, `GeneratedRegex`, `Parallel.ForEachAsync`,
+  `Random.Shared`, `CancellationTokenSource.CancelAsync`, `Stream`'s `Memory`-based async
+  overloads, `HttpRequestException.StatusCode` → downloader-owned exception carrying it,
+  `HttpVersionPolicy`, `WebHeaderCollection`'s missing public ctor). Behaviour differences on
+  the legacy targets (no HTTP/2, no TLS 1.3, `ServicePointManager` is process-wide) are
+  documented in the README's new *Supported platforms* section.
+
+### 🔧 Under the hood / CI
+
+- New `Downloader.Net462SmokeTest` console app (net462) with an in-process `TcpListener`-based
+  HTTP server (no `HttpListener` URL-ACL requirement): single-chunk, multi-chunk parallel,
+  no-range fallback, `RemoteFileResolver` metadata probe, and pause/resume/cancel checks. It
+  compiles on every OS leg (via `Microsoft.NETFramework.ReferenceAssemblies`) and **runs** in
+  the GitHub Actions Windows leg on the .NET Framework runtime.
+- AOT/trimming properties now only apply to modern TFMs; AppVeyor installs the .NET 11 SDK to
+  match the GitHub workflows.
+
 ## [5.9.8] - 2026-09-22
 
 A stop no longer leaves a `NullReferenceException` behind.

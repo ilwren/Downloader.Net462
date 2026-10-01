@@ -221,10 +221,36 @@ public class ConcurrentStream : TaskStateManagement, IDisposable, IAsyncDisposab
     /// <param name="cancellationToken">The token to monitor for cancellation requests. The default value is <see cref="P:System.Threading.CancellationToken.None" />.</param>
     /// <exception cref="T:System.OperationCanceledException">The cancellation token was canceled. This exception is stored into the returned task.</exception>
     /// <returns>A task that represents the asynchronous read operation. The value of its <see cref="P:System.Threading.Tasks.ValueTask`1.Result" /> property contains the total number of bytes read into the buffer. The result value can be less than the length of the buffer if that many bytes are not currently available, or it can be 0 (zero) if the length of the buffer is 0 or if the end of the stream has been reached.</returns>
+#if NETFRAMEWORK || NETSTANDARD2_0
+    public async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        // Stream has no Memory<byte>-based async overloads on the legacy targets — bridge via
+        // the backing array when there is one, else via a rented bounce buffer.
+        Stream stream = OpenRead();
+        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> segment))
+        {
+            return await stream.ReadAsync(segment.Array, segment.Offset, segment.Count, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        byte[] temp = System.Buffers.ArrayPool<byte>.Shared.Rent(buffer.Length);
+        try
+        {
+            int read = await stream.ReadAsync(temp, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+            temp.AsSpan(0, read).CopyTo(buffer.Span);
+            return read;
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(temp);
+        }
+    }
+#else
     public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         return OpenRead().ReadAsync(buffer, cancellationToken);
     }
+#endif
 
     /// <summary>
     /// Writes a sequence of bytes to the stream asynchronously at the specified position.
@@ -236,7 +262,10 @@ public class ConcurrentStream : TaskStateManagement, IDisposable, IAsyncDisposab
     /// <returns>A task that represents the asynchronous write operation.</returns>
     public async Task WriteAsync(long position, byte[] bytes, int length, bool isRented = true)
     {
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, bytes.Length);
+        // (manual range check — ArgumentOutOfRangeException.ThrowIfGreaterThan is .NET 7+)
+        if (length > bytes.Length)
+            throw new ArgumentOutOfRangeException(nameof(length), length,
+                "The length cannot be greater than the buffer size.");
 
         if (IsFaulted && Exception is not null)
             throw Exception;
@@ -253,7 +282,10 @@ public class ConcurrentStream : TaskStateManagement, IDisposable, IAsyncDisposab
     /// <param name="isRented">Indicates whether the buffer is rented from the ArrayPool.</param>
     public void Write(long position, byte[] bytes, int length, bool isRented)
     {
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, bytes.Length);
+        // (manual range check — ArgumentOutOfRangeException.ThrowIfGreaterThan is .NET 7+)
+        if (length > bytes.Length)
+            throw new ArgumentOutOfRangeException(nameof(length), length,
+                "The length cannot be greater than the buffer size.");
 
         if (IsFaulted && Exception is not null)
             throw Exception;
@@ -332,7 +364,13 @@ public class ConcurrentStream : TaskStateManagement, IDisposable, IAsyncDisposab
             {
                 // seek with SeekOrigin.Begin is so faster than SeekOrigin.Current
                 Seek(packet.Position, SeekOrigin.Begin);
+#if NETFRAMEWORK || NETSTANDARD2_0
+                // Stream has no ReadOnlyMemory-based overload on the legacy targets; the packet
+                // exposes its pooled backing array for the plain byte[] write.
+                await Stream.WriteAsync(packet.RentedData, 0, packet.Length, token).ConfigureAwait(false);
+#else
                 await Stream.WriteAsync(packet.Data, token).ConfigureAwait(false);
+#endif
             }
         }
         finally
@@ -385,7 +423,13 @@ public class ConcurrentStream : TaskStateManagement, IDisposable, IAsyncDisposab
         if (!_disposed)
         {
             _disposed = true;
+#if NETFRAMEWORK || NETSTANDARD2_0
+            // CancellationTokenSource has no CancelAsync on the legacy targets; Cancel() runs
+            // the callbacks synchronously, and the watcher task is awaited right after anyway.
+            _watcherCancelSource.Cancel(); // request the cancellation
+#else
             await _watcherCancelSource.CancelAsync().ConfigureAwait(false); // request the cancellation
+#endif
             if (_watcherTask is not null)
             {
                 try
@@ -393,7 +437,11 @@ public class ConcurrentStream : TaskStateManagement, IDisposable, IAsyncDisposab
                 catch { /* Watcher may throw on cancellation */ }
             }
             if (_stream is not null)
+#if NETFRAMEWORK || NETSTANDARD2_0
+                _stream.Dispose(); // Stream is not IAsyncDisposable on the legacy targets
+#else
                 await _stream.DisposeAsync().ConfigureAwait(false);
+#endif
             _inputBuffer.Dispose();
         }
     }

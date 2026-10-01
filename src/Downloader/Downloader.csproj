@@ -1,6 +1,10 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
+        <!-- Legacy targets (net462/netstandard2.0) serve .NET Framework consumers; the modern
+             targets stay untouched. Language features (records, init, primary ctors, extension
+             members, `field` keyword) all compile for net462 with LangVersion=latestMajor; the
+             runtime gaps are bridged by the conditional BCL packages below plus #if blocks. -->
+        <TargetFrameworks>net462;netstandard2.0;net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
         <LangVersion>latestMajor</LangVersion>
         <Version>5.9.8</Version>
         <Title>Downloader</Title>
@@ -49,8 +53,8 @@ Found from a download manager whose retried-after-stop row was shown as failed e
         <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     </PropertyGroup>
 
-    <!-- Enable AOT Native Package -->
-    <PropertyGroup>
+    <!-- Enable AOT Native Package (modern targets only; meaningless and ignored on netfx/netstandard) -->
+    <PropertyGroup Condition="'$(TargetFramework)' != 'net462' AND '$(TargetFramework)' != 'netstandard2.0'">
         <PublishTrimmed>true</PublishTrimmed>
         <TrimMode>full</TrimMode>
         <PublishAot>true</PublishAot>
@@ -84,6 +88,28 @@ Found from a download manager whose retried-after-stop row was shown as failed e
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
         <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="all" />
+    </ItemGroup>
+
+    <!-- BCL polyfill packages for the legacy targets (net462 / netstandard2.0).
+         These provide the types the modern .NET base library already has in-box:
+         Memory<T>/Span<T>/ArrayPool<T>, ValueTask<T>, IAsyncDisposable and System.Text.Json.
+         On net462 consumers, standard binding redirects apply (NuGet generates them when the
+         referencing app uses AutoGenerateBindingRedirects, which SDK-style projects do). -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'net462' OR '$(TargetFramework)' == 'netstandard2.0'">
+        <PackageReference Include="System.Memory" Version="4.5.5" />
+        <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+        <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+        <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    </ItemGroup>
+
+    <!-- Lets every CI leg (Linux/macOS included) compile the net462 target without a Windows
+         .NET Framework targeting pack installed. Only needed for net462; netstandard2.0 already
+         ships its reference assemblies as a NuGet package. -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'net462'">
+        <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
     </ItemGroup>
 
     <ItemGroup>
