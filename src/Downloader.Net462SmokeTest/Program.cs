@@ -180,8 +180,14 @@ internal static class Program
             await Task.Delay(400).ConfigureAwait(false);
             service.Pause();
             bool sawPaused = service.IsPaused;
-            long positionAtPause = service.Package?.ReceivedBytesSize ?? -1;
-            await Task.Delay(300).ConfigureAwait(false);
+
+            // Bytes already in flight when Pause() lands are allowed to drain — each active
+            // chunk finishes the read it was inside before honoring the pause token. So sample
+            // only AFTER a drain window, twice: a paused transfer must show zero growth between
+            // the two samples, not necessarily between "Pause returned" and "one request later".
+            await Task.Delay(500).ConfigureAwait(false);
+            long positionAfterDrain = service.Package?.ReceivedBytesSize ?? -1;
+            await Task.Delay(400).ConfigureAwait(false);
             long positionAfterPauseWait = service.Package?.ReceivedBytesSize ?? -1;
             service.Resume();
 
@@ -199,8 +205,8 @@ internal static class Program
             Check(completed != null && completed.Cancelled,
                 "cancelled download surfaces as Cancelled=true");
             Check(sawPaused, "Pause() transitions the service into the paused state");
-            Check(positionAtPause > 0 && positionAfterPauseWait == positionAtPause,
-                $"no bytes arrive while paused (at pause: {positionAtPause}, after 300ms: {positionAfterPauseWait})");
+            Check(positionAfterDrain > 0 && positionAfterPauseWait == positionAfterDrain,
+                $"no bytes arrive while paused (after drain: {positionAfterDrain}, 400ms later: {positionAfterPauseWait})");
 
             try
             {
