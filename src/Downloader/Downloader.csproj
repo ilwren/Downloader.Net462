@@ -117,8 +117,11 @@ Found from a download manager whose retried-after-stop row was shown as failed e
         </PackageReference>
         <!-- The SDK's implicit .NET Framework reference set (mscorlib, System, System.Core, ...)
              does NOT include System.Net.Http; reference it explicitly so HttpClient et al.
-             resolve against the targeting pack above. netstandard2.0 gets it via NETStandard.Library. -->
+             resolve against the targeting pack above. netstandard2.0 gets it via NETStandard.Library.
+             System.Net.Http.WebRequest holds WebRequestHandler — the only net462 handler that
+             exposes client certificates (HttpClientHandler gained them in .NET Framework 4.7.1). -->
         <Reference Include="System.Net.Http" />
+        <Reference Include="System.Net.Http.WebRequest" />
     </ItemGroup>
 
     <ItemGroup>

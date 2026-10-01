@@ -87,24 +87,24 @@ public partial class SocketClient : IDisposable
     /// </summary>
     private HttpClientHandler GetHttpHandler(RequestConfiguration config)
     {
-        HttpClientHandler handler = new() {
-            AllowAutoRedirect = config.AllowAutoRedirect,
-            MaxAutomaticRedirections = config.MaximumAutomaticRedirections,
-            AutomaticDecompression = config.AutomaticDecompression,
-            PreAuthenticate = config.PreAuthenticate,
-            UseCookies = config.CookieContainer != null,
-            UseProxy = config.Proxy != null,
-        };
+        HttpClientHandler handler = CreateHandlerInstance(config);
+        handler.AllowAutoRedirect = config.AllowAutoRedirect;
+        handler.MaxAutomaticRedirections = config.MaximumAutomaticRedirections;
+        handler.AutomaticDecompression = config.AutomaticDecompression;
+        handler.PreAuthenticate = config.PreAuthenticate;
+        handler.UseCookies = config.CookieContainer != null;
+        handler.UseProxy = config.Proxy != null;
 
         // Client certificates require opting out of the OS automatic selection first.
-        // (netstandard2.0's HttpClientHandler predates the ClientCertificateOptions property —
-        // a populated ClientCertificates collection already implies manual selection there.)
         if (config.ClientCertificates?.Count > 0)
         {
-#if !NETSTANDARD2_0
-            handler.ClientCertificateOptions = ClientCertificateOptions.Manual;
-#endif
+#if NETFRAMEWORK
+            ((WebRequestHandler)handler).ClientCertificates.AddRange(config.ClientCertificates);
+#elif NETSTANDARD2_0
+            // netstandard2.0's HttpClientHandler predates the ClientCertificateOptions property —
+            // a populated ClientCertificates collection already implies manual selection there.
             handler.ClientCertificates.AddRange(config.ClientCertificates);
+#endif
         }
 
         // TLS versions and the certificate validation callback are process-global on
@@ -134,6 +134,24 @@ public partial class SocketClient : IDisposable
 
         return handler;
     }
+
+#if NETFRAMEWORK
+    /// <summary>
+    /// Picks the netfx handler flavor: <see cref="HttpClientHandler"/> gained its
+    /// ClientCertificates/ClientCertificateOptions properties only in .NET Framework 4.7.1 —
+    /// on 4.6.2 the certificate-capable handler is <see cref="WebRequestHandler"/>
+    /// (System.Net.Http.WebRequest.dll). It shares the same HttpWebRequest/ServicePoint
+    /// back end, so every other configuration knob behaves identically.
+    /// </summary>
+    private static HttpClientHandler CreateHandlerInstance(RequestConfiguration config)
+    {
+        return config.ClientCertificates?.Count > 0
+            ? new WebRequestHandler()
+            : new HttpClientHandler();
+    }
+#else
+    private static HttpClientHandler CreateHandlerInstance(RequestConfiguration _) => new();
+#endif
 #else
     private SocketsHttpHandler GetSocketsHttpHandler(RequestConfiguration config)
     {
