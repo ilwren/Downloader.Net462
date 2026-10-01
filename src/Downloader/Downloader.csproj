@@ -93,12 +93,17 @@ Found from a download manager whose retried-after-stop row was shown as failed e
     <!-- BCL polyfill packages for the legacy targets (net462 / netstandard2.0).
          These provide the types the modern .NET base library already has in-box:
          Memory<T>/Span<T>/ArrayPool<T>, ValueTask<T>, IAsyncDisposable and System.Text.Json.
+         Versions are floored to what Microsoft.Extensions.Logging.Abstractions 10.0.12's
+         dependency chain requires on these TFMs (it pulls System.Memory/System.Threading.
+         Tasks.Extensions >= 4.6.3 and Microsoft.Bcl.AsyncInterfaces >= 10.0.12 through
+         Microsoft.Extensions.DependencyInjection.Abstractions), otherwise NuGet aborts the
+         restore with NU1605 package-downgrade errors.
          On net462 consumers, standard binding redirects apply (NuGet generates them when the
          referencing app uses AutoGenerateBindingRedirects, which SDK-style projects do). -->
     <ItemGroup Condition="'$(TargetFramework)' == 'net462' OR '$(TargetFramework)' == 'netstandard2.0'">
-        <PackageReference Include="System.Memory" Version="4.5.5" />
-        <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
-        <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+        <PackageReference Include="System.Memory" Version="4.6.3" />
+        <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
+        <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.12" />
         <PackageReference Include="System.Text.Json" Version="8.0.5" />
     </ItemGroup>
 
