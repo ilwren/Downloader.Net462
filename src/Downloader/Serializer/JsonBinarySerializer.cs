@@ -22,7 +22,9 @@ public class JsonBinarySerializer : IBinarySerializer
 
     public PackageInfo Deserialize(byte[] bytes, int offset = 0, int count = -1)
     {
-        ArgumentNullException.ThrowIfNull(bytes);
+        // ArgumentNullException.ThrowIfNull is .NET 6+; a plain check keeps one code path.
+        if (bytes is null)
+            throw new ArgumentNullException(nameof(bytes));
 
         if (bytes.Length == 0)
             return default;

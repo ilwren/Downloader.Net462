@@ -1,5 +1,6 @@
 using Downloader.Exceptions;
 using Downloader.Extensions;
+using Downloader.Polyfills;
 using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.ComponentModel;
@@ -221,7 +222,12 @@ public class DownloadService : AbstractDownloadService
             if (Package.TotalFileSize < 1)
                 return false;
 
+#if NETFRAMEWORK || NETSTANDARD2_0
+            // Stream/FileStream are not IAsyncDisposable on the legacy targets.
+            using FileStream stream = new(Package.DownloadingFileName, FileMode.Open, FileAccess.Read);
+#else
             await using FileStream stream = new(Package.DownloadingFileName, FileMode.Open, FileAccess.Read);
+#endif
             long streamLength = stream.Length;
             long metadataSize = streamLength - Package.TotalFileSize;
 
@@ -233,7 +239,9 @@ public class DownloadService : AbstractDownloadService
 
             try
             {
+#if !(NETFRAMEWORK || NETSTANDARD2_0)
                 Memory<byte> buffer = rented.AsMemory(0, (int)metadataSize);
+#endif
 
                 stream.Seek(Package.TotalFileSize, SeekOrigin.Begin);
 
@@ -241,9 +249,15 @@ public class DownloadService : AbstractDownloadService
                 int totalRead = 0;
                 while (totalRead < metadataSize)
                 {
+#if NETFRAMEWORK || NETSTANDARD2_0
+                    int read = await stream
+                        .ReadAsync(rented, totalRead, (int)metadataSize - totalRead, GlobalCancellationTokenSource.Token)
+                        .ConfigureAwait(false);
+#else
                     int read = await stream
                         .ReadAsync(buffer.Slice(totalRead), GlobalCancellationTokenSource.Token)
                         .ConfigureAwait(false);
+#endif
 
                     if (read == 0)
                         break; // unexpected end of stream
@@ -468,14 +482,12 @@ public class DownloadService : AbstractDownloadService
         Logger?.LogDebug("Starting parallel download with {MaxConcurrentTasks} concurrent tasks",
             maxConcurrentTasks);
 
-        ParallelOptions options = new() {
-            MaxDegreeOfParallelism = maxConcurrentTasks,
-            CancellationToken = GlobalCancellationTokenSource.Token
-        };
-
-        await Parallel.ForEachAsync(chunkTasks, options, async (task, _) => {
-            await task.ConfigureAwait(false);
-        }).ConfigureAwait(false);
+        // Parallel.ForEachAsync is .NET 6+; ParallelCompat supplies the legacy implementation.
+        await ParallelCompat.ForEachAsync(chunkTasks, maxConcurrentTasks,
+            GlobalCancellationTokenSource.Token,
+            async (task, _) => {
+                await task.ConfigureAwait(false);
+            }).ConfigureAwait(false);
     }
 
     /// <summary>

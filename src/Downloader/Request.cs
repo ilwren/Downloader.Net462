@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -65,7 +65,11 @@ public class Request
     {
         HttpRequestMessage request = new(HttpMethod.Get, Address);
         request.Version = Configuration.ProtocolVersion;
+#if NET5_0_OR_GREATER
+        // HttpVersionPolicy has no netfx equivalent — the .NET Framework HttpClient stack only
+        // speaks HTTP/1.x, so requesting "or lower" is implicitly its whole behaviour there.
         request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+#endif
         request.Headers.IfModifiedSince = Configuration.IfModifiedSince;
 
         // Handle authentication
@@ -110,10 +114,12 @@ public class Request
     public string GetFileNameFromUrl()
     {
         string filename = Path.GetFileName(Address.LocalPath);
-        int queryIndex = filename.IndexOf('?', StringComparison.Ordinal);
+        // Plain IndexOf('?')/Substring: char IndexOf is already ordinal, and the range
+        // indexer would require System.Index/System.Range — absent on net462/netstandard2.0.
+        int queryIndex = filename.IndexOf('?');
         if (queryIndex >= 0)
         {
-            filename = filename[..queryIndex];
+            filename = filename.Substring(0, queryIndex);
         }
 
         return filename;

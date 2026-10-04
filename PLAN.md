@@ -9,17 +9,71 @@ code change it describes.
 
 ---
 
-- **Last updated:** 2026-09-22 (CI stabilised after the stop/retry NRE fix)
-- **Branch:** develop
-- **Now working on:** waiting for a green CI matrix (Ubuntu + macOS + Windows), then cutting v5.9.8
-  and bumping Downloader.Desktop onto it
+- **Last updated:** 2026-10-01 (net462/netstandard2.0 multi-target backport)
+- **Branch:** arena/01a0f600-downloader-net462
+- **Now working on:** net462/netstandard2.0 support landed on this branch — library code, smoke
+  test app and CI legs are in place; waiting for a green CI matrix (Ubuntu + macOS + Windows +
+  Windows net462 smoke run) to validate what the Linux sandbox could not build locally
 
 ---
 
 ## Active
 
+- [~] **.NET Framework 4.6.2 (and netstandard2.0) support.** Port of the whole library to
+  multi-target (`net462;netstandard2.0;net8.0;net9.0;net10.0;net11.0`), awaiting CI validation.
+  What was done and how it is verified is in "Done (this session)" below.
 - [~] **Cut v5.9.8 and bump Downloader.Desktop onto it.** Blocked until the CI matrix is green on
   `develop` — Windows takes 25-80 minutes per run, so the tag waits for it.
+
+## Done (this session: net462 backport)
+
+- [x] **Multi-target the library to `net462` + `netstandard2.0`** without changing the modern code
+  path (all differences are `#if NETFRAMEWORK || NETSTANDARD2_0` branches; the modern branch is
+  byte-for-byte the old code, so the existing 533-test suite keeps verifying it unchanged).
+  - BCL polyfill packages for legacy TFMs only: `System.Memory` 4.5.5,
+    `System.Threading.Tasks.Extensions` 4.5.4, `Microsoft.Bcl.AsyncInterfaces` 8.0.0,
+    `System.Text.Json` 8.0.5 (net462 target still needs `Microsoft.NETFramework.ReferenceAssemblies`
+    so every OS can compile it).
+  - New `src/Downloader/Polyfills/`: `IsExternalInit` (records/`init`), `ThreadStaticRandom`
+    (`Random.Shared` stand-in), `ParallelCompat` (`Parallel.ForEachAsync` stand-in preserving
+    DoP/lazy-enumeration/fail-fast semantics).
+  - `SocketClient` (the one real rewrite): legacy `HttpClientHandler` handler path +
+    process-wide `ServicePointManager` setup in a static ctor (pin TLS 1.2,
+    `DefaultConnectionLimit=1000`, shared cert-validation callback — all with comments, since
+    netfx has no per-handler knobs); `ConnectTimeout` emulated via a fenced `CancellationTokenSource`
+    in `SendRequestAsync`; `[GeneratedRegex]` → compiled `Regex`.
+  - `HttpRequestException.StatusCode` (net5+ only): legacy throws the new internal
+    `DownloaderHttpRequestException` (still is-a `HttpRequestException`) from the
+    `EnsureSuccessStatusCode` point; `ExceptionHelper` classifies status codes through a
+    `GetHttpStatus()` helper instead of property patterns — same arm semantics, so the
+    modern-target `ExceptionHelperTest` expectations still hold.
+  - Mechanical stream fixes: `Stream`'s `Memory`/async-dispose overloads `#if`-d to the
+    byte[] forms (`ChunkDownloader`, `ThrottledStream`, `ConcurrentStream` — plus a
+    `MemoryMarshal`/bounce-buffer bridge in `ConcurrentStream.ReadAsync` —
+    `DownloadService.TryResumeFromExistingFile`); `CancellationTokenSource.CancelAsync()` →
+    `Cancel()` on legacy; `ReadAsStreamAsync(ct)` → parameterless on legacy (stream read
+    cancellation on netfx is enforced by closing the stream, which the code already does).
+  - Uniform replacements (no `#if`): `ArgumentOutOfRangeException.ThrowIf*` → plain guards,
+    `HashCode.Combine` → hand combiner, parameterless `ToDictionary()` (.NET 10-only
+    `CollectionExtensions` — this also fixes the previously broken net8/net9 compile),
+    `EndsWith('/')` → string overload.
+  - `WebHeaderCollection` has no public ctor outside modern .NET: legacy builds one via a
+    throwaway `WebClient` (`RequestConfiguration.CreateDefaultHeaders`); `HttpVersionPolicy`
+    (net5+) is skipped on legacy where the stack only speaks HTTP/1.x.
+- [x] **net462 smoke test app** (`src/Downloader.Net462SmokeTest`): in-process
+  `TcpListener`-based HTTP/1.1 server (no `HttpListener` URL-ACL/admin requirement on Windows CI)
+  serving a deterministic byte pattern incl. `206/Content-Range/Accept-Ranges`,
+  `Content-Disposition` and a drip-fed big file; checks single-chunk, multi-chunk parallel,
+  no-range fallback, `RemoteFileResolver` metadata and pause/resume/cancel. Compiles on every
+  OS leg; **runs** on the GitHub Actions Windows leg (added step in `dotnet-windows.yml`).
+  Existing test project intentionally keeps `net10.0;net11.0` TFMs — its ASP.NET Core dummy
+  server cannot run on .NET Framework.
+- [x] **CI/build**: AppVeyor installs the .NET 11 SDK (matching workflows; solution already
+  targeted net11.0); AOT/trim properties scoped to modern TFMs; README gained a
+  *Supported platforms* section with the documented netfx behaviour differences (no HTTP/2,
+  no TLS 1.3, process-wide `ServicePointManager`, binding-redirect requirement); CHANGELOG
+  `[Unreleased]` entry. Unverified locally: the sandbox has no .NET SDK and no network for
+  packages, so the first validation is CI.
 
 ## Done (this session, after the NRE fix)
 

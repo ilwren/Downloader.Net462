@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 
 namespace Downloader;
@@ -11,6 +11,13 @@ internal class Packet : IDisposable, ISizeableObject
     /// Exposes only the valid data without copying or slicing.
     /// </summary>
     public Memory<byte> Data => rentedData.AsMemory(0, Length);
+
+    /// <summary>
+    /// The full underlying array (may be larger than <see cref="Length"/>); the valid range is
+    /// <c>[0, Length)</c>. Used by the legacy write path, where <see cref="Stream"/> has no
+    /// <see cref="Memory{T}"/>-based async overloads.
+    /// </summary>
+    internal byte[] RentedData => rentedData;
     public int Length { get; }
     public long Position { get; }
     public long EndOffset { get; }

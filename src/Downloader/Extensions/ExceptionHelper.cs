@@ -1,12 +1,27 @@
-﻿using System.Net;
+using System.Net;
+using System.Net.Http;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
+using Downloader.Exceptions;
 
 namespace Downloader.Extensions;
 
 internal static class ExceptionHelper
 {
+#if NETFRAMEWORK || NETSTANDARD2_0
+    // .NET Framework's and netstandard2.0's HttpStatusCode enums both predate RFC 7538 (308)
+    // and RFC 6585 (428/429) — the named members only exist on .NET 5+;
+    // compare against the numeric values there.
+    private const HttpStatusCode PermanentRedirectStatus = (HttpStatusCode)308;
+    private const HttpStatusCode PreconditionRequiredStatus = (HttpStatusCode)428;
+    private const HttpStatusCode TooManyRequestsStatus = (HttpStatusCode)429;
+#else
+    private const HttpStatusCode PermanentRedirectStatus = HttpStatusCode.PermanentRedirect;
+    private const HttpStatusCode PreconditionRequiredStatus = HttpStatusCode.PreconditionRequired;
+    private const HttpStatusCode TooManyRequestsStatus = HttpStatusCode.TooManyRequests;
+#endif
+
     private static bool IsRedirectStatus(this HttpStatusCode statusCode)
     {
         return statusCode is
@@ -14,14 +29,17 @@ internal static class ExceptionHelper
             HttpStatusCode.Redirect or
             HttpStatusCode.RedirectMethod or
             HttpStatusCode.TemporaryRedirect or
-            HttpStatusCode.PermanentRedirect;
+            PermanentRedirectStatus;
     }
 
     extension(Exception error)
     {
         internal bool IsRequestedRangeNotSatisfiable()
         {
-            return error is HttpRequestException { StatusCode: HttpStatusCode.RequestedRangeNotSatisfiable };
+            // StatusCode lives on HttpRequestException only on .NET 5+; on net462/netstandard2.0
+            // it is carried by the downloader-owned DownloaderHttpRequestException instead.
+            return error is HttpRequestException httpError &&
+                   httpError.GetHttpStatus() == HttpStatusCode.RequestedRangeNotSatisfiable;
         }
 
         internal bool IsMomentumError()
@@ -39,21 +57,7 @@ internal static class ExceptionHelper
                 WebException { Status: WebExceptionStatus.Timeout } => true,
 
                 // HTTP responses: retry only transient / overload / redirect statuses.
-                HttpRequestException { StatusCode: null } => true, // no response received → transport failure
-                HttpRequestException {
-                    StatusCode:
-                        HttpStatusCode.RequestTimeout or       // 408
-                        HttpStatusCode.PreconditionRequired or // 428 — some CDNs (e.g. BunnyCDN) use it as a concurrency throttle (#226)
-                        HttpStatusCode.TooManyRequests or      // 429
-                        HttpStatusCode.ServiceUnavailable or   // 503
-                        HttpStatusCode.GatewayTimeout or       // 504
-                        HttpStatusCode.Ambiguous or            // 300
-                        HttpStatusCode.Moved or                // 301
-                        HttpStatusCode.Redirect or             // 302
-                        HttpStatusCode.RedirectMethod or       // 303
-                        HttpStatusCode.TemporaryRedirect or    // 307
-                        HttpStatusCode.PermanentRedirect       // 308
-                } => true,
+                HttpRequestException httpError => IsMomentumStatus(httpError.GetHttpStatus()),
 
                 // Permanent client errors (400/401/403/404/...) and server errors such as
                 // 500/502 are not worth retrying.
@@ -99,9 +103,45 @@ internal static class ExceptionHelper
 
         internal bool IsRedirectError()
         {
-            return error is HttpRequestException { StatusCode: not null } responseException &&
-                   responseException.StatusCode.Value.IsRedirectStatus();
+            return error is HttpRequestException httpError &&
+                   httpError.GetHttpStatus() is { } status &&
+                   status.IsRedirectStatus();
         }
+    }
+
+    /// <summary>
+    /// Reads the status code carried by an <see cref="HttpRequestException"/>: the framework
+    /// property on .NET 5+, the downloader-owned <see cref="DownloaderHttpRequestException"/>
+    /// payload on the legacy targets (net462 / netstandard2.0), which predate that property.
+    /// </summary>
+    private static HttpStatusCode? GetHttpStatus(this HttpRequestException error)
+    {
+#if NET5_0_OR_GREATER
+        return error?.StatusCode;
+#else
+        return (error as DownloaderHttpRequestException)?.StatusCode;
+#endif
+    }
+
+    /// <summary>
+    /// Whether an HTTP status (or its absence) is worth a retry. No response at all means a
+    /// transport-level failure (always retry); permanent client errors and hard server errors
+    /// are not.
+    /// </summary>
+    private static bool IsMomentumStatus(HttpStatusCode? status)
+    {
+        return status is null || // no response received → transport failure
+               status is HttpStatusCode.RequestTimeout or       // 408
+                   PreconditionRequiredStatus or                // 428 — some CDNs (e.g. BunnyCDN) use it as a concurrency throttle (#226)
+                   TooManyRequestsStatus or                     // 429
+                   HttpStatusCode.ServiceUnavailable or         // 503
+                   HttpStatusCode.GatewayTimeout or             // 504
+                   HttpStatusCode.Ambiguous or                  // 300
+                   HttpStatusCode.Moved or                      // 301
+                   HttpStatusCode.Redirect or                   // 302
+                   HttpStatusCode.RedirectMethod or             // 303
+                   HttpStatusCode.TemporaryRedirect or          // 307
+                   PermanentRedirectStatus;                     // 308
     }
 
     /// <summary>

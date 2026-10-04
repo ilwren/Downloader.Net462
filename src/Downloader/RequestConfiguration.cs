@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net;
 using System.Net.Cache;
 using System.Net.Http.Headers;
@@ -20,7 +20,11 @@ public class RequestConfiguration
     /// </summary>
     public RequestConfiguration()
     {
+#if NETFRAMEWORK || NETSTANDARD2_0
+        Headers = CreateDefaultHeaders();
+#else
         Headers = ["Accept-Encoding: identity"];
+#endif
         AllowAutoRedirect = true;
         AutomaticDecompression = DecompressionMethods.None;
         ClientCertificates = [];
@@ -37,6 +41,25 @@ public class RequestConfiguration
         ConnectTimeout = 30 * 1000; // 30 seconds
         UserAgent = BuildDefaultUserAgent();
     }
+
+#if NETFRAMEWORK || NETSTANDARD2_0
+    /// <summary>
+    /// Creates the default header collection. <see cref="WebHeaderCollection"/> exposes no public
+    /// constructor outside modern .NET (on .NET Framework its constructor is internal), so the
+    /// instance is borrowed from a throwaway <see cref="WebClient"/>, whose header collection is
+    /// writable and outlives its owner.
+    /// </summary>
+    private static WebHeaderCollection CreateDefaultHeaders()
+    {
+        using (WebClient client = new())
+        {
+            WebHeaderCollection headers = client.Headers;
+            // Same "name: value" form the modern collection expression uses.
+            headers.Add("Accept-Encoding: identity");
+            return headers;
+        }
+    }
+#endif
 
     private static string BuildDefaultUserAgent()
     {
@@ -72,11 +95,11 @@ public class RequestConfiguration
         string candidate = versionText.Trim();
         int metadataSeparatorIndex = candidate.IndexOf('+');
         if (metadataSeparatorIndex >= 0)
-            candidate = candidate[..metadataSeparatorIndex];
+            candidate = candidate.Substring(0, metadataSeparatorIndex);
 
         int preReleaseSeparatorIndex = candidate.IndexOf('-');
         if (preReleaseSeparatorIndex >= 0)
-            candidate = candidate[..preReleaseSeparatorIndex];
+            candidate = candidate.Substring(0, preReleaseSeparatorIndex);
 
         if (!Version.TryParse(candidate, out Version parsed) || parsed == ZeroVersion)
             return null;

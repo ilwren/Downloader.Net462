@@ -12,12 +12,16 @@ environment:
   DOTNET_NOLOGO: true
 
 install:
-  # Install .NET SDKs needed for multi-targeting (net8.0, net9.0, net10.0)
+  # Install .NET SDKs needed for multi-targeting (net8.0 .. net11.0). The net462/netstandard2.0
+  # targets of the library and the net462 smoke-test exe need no Windows machine: they compile
+  # through the Microsoft.NETFramework.ReferenceAssemblies NuGet packages. Only *running* the
+  # net462 smoke test stays Windows-only (GitHub Actions Windows leg).
   - wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
   - chmod +x dotnet-install.sh
   - ./dotnet-install.sh --channel 8.0
   - ./dotnet-install.sh --channel 9.0
   - ./dotnet-install.sh --channel 10.0
+  - ./dotnet-install.sh --channel 11.0
   - export PATH="$HOME/.dotnet:$PATH"
   - dotnet --list-sdks
 

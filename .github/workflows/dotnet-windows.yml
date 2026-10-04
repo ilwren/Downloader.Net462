@@ -34,3 +34,16 @@ jobs:
       - name: Run tests
         timeout-minutes: 25
         run: dotnet test -c Release ./src --verbosity normal --no-build --no-restore
+
+      # The Downloader library also targets net462/netstandard2.0 (compiled on every OS leg via
+      # Microsoft.NETFramework.ReferenceAssemblies). Windows is the only leg that can also *run*
+      # the .NET Framework artifact: the smoke test verifies the net462 HTTP path
+      # (HttpClientHandler/ServicePoint) end-to-end against its in-process TCP-based server.
+      - name: Run net462 smoke test (.NET Framework)
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path ./src/Downloader.Net462SmokeTest/bin/Release/net462 -Filter Downloader.Net462SmokeTest.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "net462 smoke test exe not found" }
+          & $exe.FullName
+          if ($LASTEXITCODE -ne 0) { throw "net462 smoke test failed with exit code $LASTEXITCODE" }

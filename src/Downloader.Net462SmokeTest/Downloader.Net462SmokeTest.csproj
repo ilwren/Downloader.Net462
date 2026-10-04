@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net462</TargetFramework>
+    <LangVersion>latestMajor</LangVersion>
+    <RootNamespace>Net462SmokeTest</RootNamespace>
+    <AssemblyName>Downloader.Net462SmokeTest</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <!-- Binding redirects are mandatory for net462 apps consuming the BCL polyfill packages
+         (System.Memory, System.Threading.Tasks.Extensions, Microsoft.Bcl.AsyncInterfaces, ...)
+         that the Downloader library's net462 target depends on; without them the app fails at
+         runtime with assembly-load errors. -->
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Downloader\Downloader.csproj" />
+    <!-- Lets every CI leg (Linux/macOS included) compile this net462 exe without a Windows
+         .NET Framework targeting pack installed. Running it stays Windows-only. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

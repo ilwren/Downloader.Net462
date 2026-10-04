@@ -1,8 +1,10 @@
-﻿using Downloader.Exceptions;
+using Downloader.Exceptions;
 using Downloader.Extensions;
+using Downloader.Polyfills;
 using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.ComponentModel;
+using System.Net.Http;
 using System.Net.Http.Headers;
 
 namespace Downloader;
@@ -126,7 +128,12 @@ internal class ChunkDownloader
         double window = baseDelayMs * Math.Pow(2, attempt - 1);
         int cappedWindowMs = (int)Math.Min(MaxBackoffMs, window);
         // Full jitter: a uniformly random point within [0, cappedWindowMs].
+#if NETFRAMEWORK || NETSTANDARD2_0
+        // Random.Shared exists only on .NET 6+; a thread-static Random avoids lock contention.
+        return TimeSpan.FromMilliseconds(ThreadStaticRandom.Next(cappedWindowMs + 1));
+#else
         return TimeSpan.FromMilliseconds(Random.Shared.Next(cappedWindowMs + 1));
+#endif
     }
 
     private async ValueTask DownloadChunk(Request request, PauseToken pauseToken, CancellationToken cancelToken)
@@ -143,12 +150,24 @@ internal class ChunkDownloader
 
         _logger?.LogDebug("Downloading the chunk {ChunkId} with response status code: {ResponseMsgStatusCode}", Chunk.Id, responseMsg.StatusCode);
 
+#if NETFRAMEWORK || NETSTANDARD2_0
+        // Stream is not IAsyncDisposable and HttpContent.ReadAsStreamAsync has no token
+        // overload on the legacy targets; cancellation is enforced by closing the stream
+        // (see ReadStream), which is how the netfx stack has always cancelled reads.
+        using Stream responseStream =
+            await responseMsg.Content.ReadAsStreamAsync().ConfigureAwait(false);
+#else
         await using Stream responseStream =
             await responseMsg.Content.ReadAsStreamAsync(cancelToken).ConfigureAwait(false);
+#endif
 
         _sourceStream = new ThrottledStream(responseStream, _configuration.MaximumSpeedPerChunk);
         await ReadStream(_sourceStream, pauseToken, cancelToken).ConfigureAwait(false);
+#if NETFRAMEWORK || NETSTANDARD2_0
+        _sourceStream.Dispose();
+#else
         await _sourceStream.DisposeAsync();
+#endif
     }
 
     private void SetRequestRange(HttpRequestMessage request)
@@ -175,7 +194,11 @@ internal class ChunkDownloader
         try
         {
             // close stream on cancellation because, it doesn't work on .NetFramework
+#if NETFRAMEWORK || NETSTANDARD2_0
+            using CancellationTokenRegistration _ = cancelToken.Register(stream.Close);
+#else
             await using CancellationTokenRegistration _ = cancelToken.Register(stream.Close);
+#endif
             while (readSize > 0 && Chunk.CanWrite)
             {
                 cancelToken.ThrowIfCancellationRequested();
@@ -186,11 +209,19 @@ internal class ChunkDownloader
                     using CancellationTokenSource innerCts = CancellationTokenSource.CreateLinkedTokenSource(cancelToken);
                     innerToken = innerCts.Token;
                     innerCts.CancelAfter(Chunk.Timeout);
+#if NETFRAMEWORK || NETSTANDARD2_0
+                    using (innerToken.Value.Register(stream.Close))
+                    {
+                        readSize = await stream.ReadAsync(buffer, 0, buffer.Length, innerToken.Value).ConfigureAwait(false);
+                        _logger?.LogDebug("Read {ReadSize}bytes of the chunk {ChunkId} stream", readSize, Chunk.Id);
+                    }
+#else
                     await using (innerToken.Value.Register(stream.Close))
                     {
                         readSize = await stream.ReadAsync(buffer, innerToken.Value).ConfigureAwait(false);
                         _logger?.LogDebug("Read {ReadSize}bytes of the chunk {ChunkId} stream", readSize, Chunk.Id);
                     }
+#endif
 
                     readSize = (int)Math.Min(Chunk.EmptyLength, readSize);
                     if (readSize > 0)

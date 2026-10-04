@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -97,7 +97,12 @@ internal class ThrottledStream : Stream
         CancellationToken cancellationToken)
     {
         await Throttle(count).ConfigureAwait(false);
+#if NETFRAMEWORK || NETSTANDARD2_0
+        // Stream has no Memory<byte>-based async overloads on the legacy targets.
+        return await _baseStream.ReadAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+#else
         return await _baseStream.ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
+#endif
     }
 
     /// <inheritdoc />
@@ -111,7 +116,11 @@ internal class ThrottledStream : Stream
     public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         await Throttle(count).ConfigureAwait(false);
+#if NETFRAMEWORK || NETSTANDARD2_0
+        await _baseStream.WriteAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+#else
         await _baseStream.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
+#endif
     }
 
     public override void Close()

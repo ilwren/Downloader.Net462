@@ -1,8 +1,10 @@
+using Downloader.Exceptions;
 using Downloader.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Authentication;
@@ -21,9 +23,18 @@ public partial class SocketClient : IDisposable
     private const string FallbackUserAgent = "Downloader/5.0";
     private const string InvalidUserAgentWithZeroVersion3 = "Downloader/0.0.0";
     private const string InvalidUserAgentWithZeroVersion4 = "Downloader/0.0.0.0";
+    private const string RangePatternText = @"bytes\s*((?<from>\d*)\s*-\s*(?<to>\d*)|\*)\s*\/\s*(?<size>\d+|\*)";
 
-    [GeneratedRegex(@"bytes\s*((?<from>\d*)\s*-\s*(?<to>\d*)|\*)\s*\/\s*(?<size>\d+|\*)", RegexOptions.Compiled)]
+#if NETFRAMEWORK || NETSTANDARD2_0
+    // [GeneratedRegex] requires .NET 7+; the legacy targets use an ordinary compiled Regex
+    // (same behaviour, regex engine instead of source-generated matcher).
+    private static readonly Regex RangePattern = new(RangePatternText, RegexOptions.Compiled);
+
+    private static Regex RangePatternRegex() => RangePattern;
+#else
+    [GeneratedRegex(RangePatternText, RegexOptions.Compiled)]
     private static partial Regex RangePatternRegex();
+#endif
 
     private readonly DownloadConfiguration configuration;
     private readonly Regex _contentRangePattern = RangePatternRegex();
@@ -32,6 +43,29 @@ public partial class SocketClient : IDisposable
     private int _redirectAttempts;
     private ConcurrentDictionary<string, string> ResponseHeaders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     private HttpClient Client { get; }
+
+#if NETFRAMEWORK || NETSTANDARD2_0
+    static SocketClient()
+    {
+        // .NET Framework HTTP plumbing is the process-global ServicePoint stack (HttpClient
+        // on netfx wraps HttpWebRequest), so the knobs that are per-handler on the modern
+        // SocketsHttpHandler have to be applied process-wide here:
+        //  - TLS: on net462, TLS 1.2 is only negotiated when SchUseStrongCrypto is set in the
+        //    registry or when the protocol is enabled explicitly. Pinning Tls12 (OR-ed, so
+        //    whatever the OS/app already enabled stays on) keeps downloads working against
+        //    TLS-1.2-only servers out of the box. TLS 1.3 is unavailable on net462.
+        //  - Connection limit: SocketsHttpHandler allows 1000 connections per server on the
+        //    modern targets; ServicePointManager defaults to 2, which would cripple chunked
+        //    parallel downloads, so lift it the same way.
+        //  - Certificate validation: HttpClientHandler on net462 has no per-handler validation
+        //    callback, so the same self-signed-certificate acceptance used by the modern
+        //    build is installed on the global callback (documented behaviour difference).
+        ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+        ServicePointManager.ServerCertificateValidationCallback = ExceptionHelper.CertificateValidationCallBack;
+        ServicePointManager.DefaultConnectionLimit =
+            Math.Max(ServicePointManager.DefaultConnectionLimit, 1000);
+    }
+#endif
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SocketClient"/> class with the specified configuration.
@@ -42,6 +76,83 @@ public partial class SocketClient : IDisposable
         Client = GetHttpClientWithSocketHandler(config);
     }
 
+#if NETFRAMEWORK || NETSTANDARD2_0
+    /// <summary>
+    /// Builds an <see cref="HttpClientHandler"/> for the legacy targets (net462 / netstandard2.0),
+    /// where <see cref="SocketsHttpHandler"/> does not exist. The .NET Framework handler is backed
+    /// by HttpWebRequest/ServicePoint, which differs from the modern path in documented ways:
+    /// no HTTP/2 (always HTTP/1.1), TLS/connection limits configured process-wide (see the static
+    /// constructor), and no <c>ConnectTimeout</c>/<c>KeepAlivePing</c> knobs (the connect deadline
+    /// is emulated with a cancellation token in <see cref="SendRequestAsync"/>).
+    /// </summary>
+    private HttpClientHandler GetHttpHandler(RequestConfiguration config)
+    {
+        HttpClientHandler handler = CreateHandlerInstance(config);
+        handler.AllowAutoRedirect = config.AllowAutoRedirect;
+        handler.MaxAutomaticRedirections = config.MaximumAutomaticRedirections;
+        handler.AutomaticDecompression = config.AutomaticDecompression;
+        handler.PreAuthenticate = config.PreAuthenticate;
+        handler.UseCookies = config.CookieContainer != null;
+        handler.UseProxy = config.Proxy != null;
+
+        // Client certificates require opting out of the OS automatic selection first.
+        if (config.ClientCertificates?.Count > 0)
+        {
+#if NETFRAMEWORK
+            ((WebRequestHandler)handler).ClientCertificates.AddRange(config.ClientCertificates);
+#elif NETSTANDARD2_0
+            // netstandard2.0's HttpClientHandler predates the ClientCertificateOptions property —
+            // a populated ClientCertificates collection already implies manual selection there.
+            handler.ClientCertificates.AddRange(config.ClientCertificates);
+#endif
+        }
+
+        // TLS versions and the certificate validation callback are process-global on
+        // .NET Framework — configured once in the static SocketClient constructor.
+
+        // Configure credentials
+        if (config.Credentials != null)
+        {
+            handler.Credentials = config.Credentials;
+            handler.PreAuthenticate = config.PreAuthenticate;
+        }
+
+        // Configure cookies
+        if (handler.UseCookies && config.CookieContainer != null)
+        {
+            handler.CookieContainer = config.CookieContainer;
+        }
+
+        // Configure proxy
+        if (handler.UseProxy && config.Proxy != null)
+        {
+            handler.Proxy = config.Proxy;
+        }
+
+        // No Expect100ContinueTimeout on the netfx handler (global, 350ms default). When an
+        // Expect header is configured the header itself is still forwarded verbatim.
+
+        return handler;
+    }
+
+#if NETFRAMEWORK
+    /// <summary>
+    /// Picks the netfx handler flavor: <see cref="HttpClientHandler"/> gained its
+    /// ClientCertificates/ClientCertificateOptions properties only in .NET Framework 4.7.1 —
+    /// on 4.6.2 the certificate-capable handler is <see cref="WebRequestHandler"/>
+    /// (System.Net.Http.WebRequest.dll). It shares the same HttpWebRequest/ServicePoint
+    /// back end, so every other configuration knob behaves identically.
+    /// </summary>
+    private static HttpClientHandler CreateHandlerInstance(RequestConfiguration config)
+    {
+        return config.ClientCertificates?.Count > 0
+            ? new WebRequestHandler()
+            : new HttpClientHandler();
+    }
+#else
+    private static HttpClientHandler CreateHandlerInstance(RequestConfiguration _) => new();
+#endif
+#else
     private SocketsHttpHandler GetSocketsHttpHandler(RequestConfiguration config)
     {
         SocketsHttpHandler handler = new() {
@@ -101,6 +212,7 @@ public partial class SocketClient : IDisposable
 
         return handler;
     }
+#endif
 
     private HttpClient GetHttpClientWithSocketHandler(DownloadConfiguration downloadConfig)
     {
@@ -115,11 +227,16 @@ public partial class SocketClient : IDisposable
         downloadConfig.CustomHttpClientFactory = null;
         RequestConfiguration requestConfig = downloadConfig.RequestConfiguration;
 
-        // Use custom handler factory if provided, otherwise create the default SocketsHttpHandler
+        // Use custom handler factory if provided, otherwise create the default handler
+        // (SocketsHttpHandler on modern targets, HttpClientHandler on net462/netstandard2.0)
         HttpMessageHandler handler = downloadConfig.CustomHttpMessageHandlerFactory?.Invoke();
         bool handlerExternallyOwned = handler is not null;
         if (!handlerExternallyOwned)
+#if NETFRAMEWORK || NETSTANDARD2_0
+            handler = GetHttpHandler(requestConfig);
+#else
             handler = GetSocketsHttpHandler(requestConfig);
+#endif
 
         client = new(handler, disposeHandler: !handlerExternallyOwned) {
             Timeout = TimeSpan.FromMilliseconds(downloadConfig.HttpClientTimeout)
@@ -180,7 +297,8 @@ public partial class SocketClient : IDisposable
             return FallbackUserAgent;
 
         string resolvedUserAgent = userAgent.Trim();
-        if (resolvedUserAgent.EndsWith('/') ||
+        // (EndsWith with a string overload — the char overload doesn't exist on net462)
+        if (resolvedUserAgent.EndsWith("/", StringComparison.Ordinal) ||
             resolvedUserAgent.Equals(InvalidUserAgentWithZeroVersion3, StringComparison.OrdinalIgnoreCase) ||
             resolvedUserAgent.Equals(InvalidUserAgentWithZeroVersion4, StringComparison.OrdinalIgnoreCase))
         {
@@ -316,10 +434,10 @@ public partial class SocketClient : IDisposable
 
         if (supportsRange)
         {
-            return GetTotalSizeFromContentRange(ResponseHeaders.ToDictionary());
+            return GetTotalSizeFromContentRange(ResponseHeaders.ToDictionary(pair => pair.Key, pair => pair.Value));
         }
 
-        return GetTotalSizeFromContentLength(ResponseHeaders.ToDictionary());
+        return GetTotalSizeFromContentLength(ResponseHeaders.ToDictionary(pair => pair.Key, pair => pair.Value));
     }
 
     /// <summary>
@@ -549,9 +667,35 @@ public partial class SocketClient : IDisposable
     public async Task<HttpResponseMessage> SendRequestAsync(HttpRequestMessage request,
         CancellationToken cancelToken = default)
     {
-        HttpResponseMessage response = await Client
+        HttpResponseMessage response;
+#if NETFRAMEWORK || NETSTANDARD2_0
+        // The netfx handler has no ConnectTimeout knob, so emulate it: cancel the send if the
+        // response headers have not arrived within the configured connect deadline. Only the
+        // SendAsync itself is fenced — the body stream (long transfers beyond this deadline)
+        // keeps running on the caller's own cancellation token.
+        using (CancellationTokenSource connectTimeoutSource =
+               CreateConnectTimeoutCancelSource(cancelToken))
+        {
+            CancellationToken sendToken = connectTimeoutSource?.Token ?? cancelToken;
+            try
+            {
+                response = await Client
+                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, sendToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (connectTimeoutSource is not null &&
+                                                     connectTimeoutSource.IsCancellationRequested &&
+                                                     !cancelToken.IsCancellationRequested)
+            {
+                throw new TaskCanceledException(
+                    $"The request timed out while connecting (ConnectTimeout: {configuration.RequestConfiguration.ConnectTimeout} ms).");
+            }
+        }
+#else
+        response = await Client
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancelToken)
             .ConfigureAwait(false);
+#endif
 
         // Copy all response headers to our dictionary
         ResponseHeaders.Clear();
@@ -565,10 +709,37 @@ public partial class SocketClient : IDisposable
             ResponseHeaders.TryAdd(header.Key, header.Value.FirstOrDefault());
         }
 
+#if NETFRAMEWORK || NETSTANDARD2_0
+        // netfx's HttpRequestException carries no StatusCode — wrap it so the retry policy
+        // can still classify the error (mirrors EnsureSuccessStatusCode's throw point).
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new DownloaderHttpRequestException(response.StatusCode,
+                $"Response status code does not indicate success: {(int)response.StatusCode} ({response.ReasonPhrase}).");
+        }
+#else
         // throws an HttpRequestException error if the response status code isn't within the 200-299 range.
         response.EnsureSuccessStatusCode();
+#endif
         return response;
     }
+
+#if NETFRAMEWORK || NETSTANDARD2_0
+    /// <summary>
+    /// Creates a linked cancel source that fires after <see cref="RequestConfiguration.ConnectTimeout"/>
+    /// milliseconds, or <c>null</c> when no connect deadline is configured.
+    /// </summary>
+    private CancellationTokenSource CreateConnectTimeoutCancelSource(CancellationToken cancelToken)
+    {
+        int connectTimeout = configuration.RequestConfiguration.ConnectTimeout;
+        if (connectTimeout <= 0)
+            return null;
+
+        CancellationTokenSource source = CancellationTokenSource.CreateLinkedTokenSource(cancelToken);
+        source.CancelAfter(connectTimeout);
+        return source;
+    }
+#endif
 
     /// <summary>
     /// Disposes of the resources (if any) used by the <see cref="SocketClient"/>.

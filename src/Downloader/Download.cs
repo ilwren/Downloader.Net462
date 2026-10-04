@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 
 namespace Downloader;
 
@@ -116,7 +116,16 @@ internal class Download : IDownload
 
     public override int GetHashCode()
     {
-        return HashCode.Combine(Url, Folder, Filename);
+        // HashCode.Combine is .NET Standard 2.1+; a hand-rolled combiner keeps one code path
+        // across all targets (and matches Equals, which uses the same three fields).
+        unchecked
+        {
+            int hash = 17;
+            hash = (hash * 31) + (Url?.GetHashCode() ?? 0);
+            hash = (hash * 31) + (Folder?.GetHashCode() ?? 0);
+            hash = (hash * 31) + (Filename?.GetHashCode() ?? 0);
+            return hash;
+        }
     }
 
     public async ValueTask DisposeAsync()
